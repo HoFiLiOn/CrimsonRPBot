@@ -2,11 +2,13 @@ import telebot
 import sqlite3
 import random
 import json
+import math
 from datetime import datetime, timedelta
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 TOKEN = "8629386115:AAGp0P8iNH9PiRtzRCxxF8If_7ZiodXf3X8"
 ADMIN_ID = 7040677455
+ITEMS_PER_PAGE = 5
 
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 DB_FILE = "crimson_rp.db"
@@ -15,6 +17,15 @@ DB_FILE = "crimson_rp.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    
+    # Настройки тем для форума
+    c.execute('''CREATE TABLE IF NOT EXISTS forum_topics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER,
+        topic_id INTEGER,
+        topic_name TEXT,
+        event_type TEXT
+    )''')
     
     # Игроки
     c.execute('''CREATE TABLE IF NOT EXISTS players (
@@ -48,7 +59,7 @@ def init_db():
         description TEXT
     )''')
     
-    # Самолёты (авиасалон)
+    # Авиасалон
     c.execute('''CREATE TABLE IF NOT EXISTS planes_shop (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
@@ -71,7 +82,7 @@ def init_db():
         user_id INTEGER
     )''')
     
-    # Логи
+    # Логи зарплат
     c.execute('''CREATE TABLE IF NOT EXISTS salary_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -85,55 +96,49 @@ def init_db():
     c.execute("SELECT COUNT(*) FROM businesses")
     if c.fetchone()[0] == 0:
         businesses = [
-            # Город Дубровка
-            ('Заправка', 'Дубровка', 3000000, 600000, 200000, '', 'Автозаправочный комплекс (АЗК) — розничная продажа топлива'),
-            ('Магазин Пятёрочка', 'Дубровка', 4000000, 800700, 200000, '', 'Продуктовый магазин в центре города'),
-            ('Шаурмечная', 'Дубровка', 6700000, 1000000, 400000, '', 'Быстрое питание, шаурма, фастфуд'),
-            ('Ресторан', 'Дубровка', 9000000, 3000000, 1000000, 'ivanstein11', 'Элитное заведение с высокой кухней'),
-            ('Бургерная', 'Дубровка', 6700000, 1000000, 400000, '', 'Бургеры, картошка фри, напитки'),
-            ('СТО', 'Дубровка', 6700000, 1000000, 400000, '', 'Станция технического обслуживания автомобилей'),
-            ('Мебельный магазин', 'Дубровка', 14000000, 6000000, 1700000, 'pampers_0000', 'Продажа мебели и предметов интерьера'),
-            ('Автошкола', 'Дубровка', 20000000, 7000000, 1700000, '', 'Обучение вождению, подготовка водителей'),
-            ('Автосалон', 'Дубровка', 40000000, 0, 2000000, 'MustafaPRO_PUBGmobile', 'Продажа автомобилей (зарплата от продаж)'),
-            ('Завод и База дальнобойщиков', 'Дубровка', 40000000, 12000000, 3000000, 'Pelmen4ik', 'Промышленное производство и логистика'),
-            ('Аэропорт', 'Дубровка', 40000000, 13000000, 3000000, 'Rick_sanhez45', 'Приём и отправка воздушных судов'),
-            ('Нефтебаза', 'Дубровка', 45000000, 15000000, 4000000, 'Rick_sanhez45', 'Хранение и переработка нефтепродуктов'),
-            # Город Арзамас
-            ('Заправка', 'Арзамас', 3000000, 600000, 200000, 'pampers_0000', 'Автозаправочный комплекс (АЗК)'),
-            ('СТО', 'Арзамас', 6700000, 1000000, 400000, 'PELMEN4IK_RIP', 'Станция технического обслуживания'),
-            ('База дальнобойщиков', 'Арзамас', 20000000, 7000000, 1700000, 'Rick_sanhez45', 'Логистический терминал для большегрузов'),
+            ('Заправка', 'Дубровка', 3000000, 600000, 200000, '', '⛽ Автозаправочный комплекс (АЗК)'),
+            ('Магазин Пятёрочка', 'Дубровка', 4000000, 800700, 200000, '', '🛒 Продуктовый магазин'),
+            ('Шаурмечная', 'Дубровка', 6700000, 1000000, 400000, '', '🌯 Быстрое питание'),
+            ('Ресторан', 'Дубровка', 9000000, 3000000, 1000000, 'ivanstein11', '🍽️ Элитное заведение'),
+            ('Бургерная', 'Дубровка', 6700000, 1000000, 400000, '', '🍔 Бургеры и фастфуд'),
+            ('СТО', 'Дубровка', 6700000, 1000000, 400000, '', '🔧 Станция техобслуживания'),
+            ('Мебельный магазин', 'Дубровка', 14000000, 6000000, 1700000, 'pampers_0000', '🪑 Продажа мебели'),
+            ('Автошкола', 'Дубровка', 20000000, 7000000, 1700000, '', '🚗 Обучение вождению'),
+            ('Автосалон', 'Дубровка', 40000000, 0, 2000000, 'MustafaPRO_PUBGmobile', '🏎️ Продажа авто'),
+            ('Завод и База дальнобойщиков', 'Дубровка', 40000000, 12000000, 3000000, 'Pelmen4ik', '🏭 Промышленность'),
+            ('Аэропорт', 'Дубровка', 40000000, 13000000, 3000000, 'Rick_sanhez45', '✈️ Авиаперевозки'),
+            ('Нефтебаза', 'Дубровка', 45000000, 15000000, 4000000, 'Rick_sanhez45', '🛢️ Хранение нефти'),
+            ('Заправка', 'Арзамас', 3000000, 600000, 200000, 'pampers_0000', '⛽ АЗК'),
+            ('СТО', 'Арзамас', 6700000, 1000000, 400000, 'PELMEN4IK_RIP', '🔧 СТО'),
+            ('База дальнобойщиков', 'Арзамас', 20000000, 7000000, 1700000, 'Rick_sanhez45', '🚛 Логистика'),
         ]
         for b in businesses:
             c.execute("INSERT INTO businesses (name, city, price, salary, tax, owner_name, description) VALUES (?, ?, ?, ?, ?, ?, ?)", b)
     
-    # Добавляем самолёты из скриншотов
+    # Добавляем самолёты, если пусто
     c.execute("SELECT COUNT(*) FROM planes_shop")
     if c.fetchone()[0] == 0:
         planes = [
-            ('Cessna 172 (Красный)', 23000000, 'Американский лёгкий самолёт. Самый массовый самолёт в истории авиации.'),
-            ('Cessna 172 (Зелёный)', 23000000, 'Американский лёгкий самолёт. Самый массовый самолёт в истории авиации.'),
-            ('Cessna 185 Skywagon (Синий)', 25000000, 'Американский лёгкий самолёт компании Cessna.'),
-            ('Як-52', 22000000, 'Советский спортивно-тренировочный самолёт.'),
-            ('Як-55', 28000000, 'Одноместный пилотажный самолёт для тренировок и соревнований.'),
-            ('Boeing-Stearman Model 75', 24000000, 'Американский биплан, учебно-тренировочный самолёт 1930-40х годов.'),
-            ('МиГ-17', 29000000, 'Советский реактивный истребитель, достигал скорости звука.'),
-            ('North American F-86 Sabre', 29000000, 'Американский реактивный истребитель конца 1940-х годов.'),
-            ('Pilatus PC-7', 29000000, 'Швейцарский учебно-тренировочный самолёт.'),
-            ('Canadair CT-114 Tutor', 45000000, 'Канадский реактивный учебно-тренировочный самолёт.'),
-            ('Curtiss P-40', 42000000, 'Американский истребитель Второй мировой войны.'),
-            ('Boeing B-52 Stratofortress', 59000000, 'Американский межконтинентальный стратегический бомбардировщик.'),
-            ('MQ-1 Predator', 55000000, 'Американский многоцелевой беспилотный летательный аппарат.'),
-            ('Dassault Falcon 50/900', 35000000, 'Французские трёхдвигательные бизнес-джеты.'),
-            ('Air Racer', 32000000, 'Спортивный самолёт с мощным двигателем (прототип).'),
-            ('Ан-2 Кукурузник', 40000000, 'Советский лёгкий многоцелевой самолёт, биплан.'),
-            ('Су-39', 34000000, 'Модификация штурмовика Су-25, всепогодный.'),
-            ('ATR 42', 40000000, 'Турбовинтовой региональный пассажирский самолёт.'),
-            ('Learjet 23', 24000000, 'Двухдвигательный реактивный самолёт бизнес-класса.'),
-            ('Grumman F6F Hellcat', 32000000, 'Легендарный палубный истребитель США времен ВМВ.'),
-            ('Де Хэвилленд DH.100 Вампир', 22000000, 'Британский реактивный истребитель 1940-х годов.'),
-            ('Boeing 707', 35000000, 'Американский реактивный пассажирский лайнер 1950-х годов.'),
-            ('Cy-47 Беркут', 36000000, 'Российский экспериментальный палубный истребитель с крылом обратной стреловидности.'),
-            ('Northrop B-2 Spirit', 49000000, 'Американский малозаметный стратегический бомбардировщик.'),
+            ('Cessna 172 (Красный)', 23000000, '🇺🇸 Лёгкий самолёт, самый массовый в истории'),
+            ('Cessna 172 (Зелёный)', 23000000, '🇺🇸 Лёгкий самолёт'),
+            ('Cessna 185 Skywagon', 25000000, '🇺🇸 Лёгкий самолёт Cessna'),
+            ('Як-52', 22000000, '🇷🇺 Советский спортивно-тренировочный'),
+            ('Як-55', 28000000, '🇷🇺 Одноместный пилотажный'),
+            ('МиГ-17', 29000000, '🇷🇺 Советский реактивный истребитель'),
+            ('North American F-86 Sabre', 29000000, '🇺🇸 Американский реактивный истребитель'),
+            ('Pilatus PC-7', 29000000, '🇨🇭 Швейцарский учебно-тренировочный'),
+            ('Curtiss P-40', 42000000, '🇺🇸 Истребитель Второй мировой'),
+            ('Boeing B-52 Stratofortress', 59000000, '🇺🇸 Стратегический бомбардировщик'),
+            ('MQ-1 Predator', 55000000, '🇺🇸 Беспилотный летательный аппарат'),
+            ('Dassault Falcon 50', 35000000, '🇫🇷 Бизнес-джет'),
+            ('Ан-2 Кукурузник', 40000000, '🇷🇺 Советский многоцелевой биплан'),
+            ('Су-39', 34000000, '🇷🇺 Модификация штурмовика Су-25'),
+            ('ATR 42', 40000000, '🇫🇷 Турбовинтовой региональный самолёт'),
+            ('Learjet 23', 24000000, '🇺🇸 Бизнес-джет'),
+            ('Grumman F6F Hellcat', 32000000, '🇺🇸 Палубный истребитель ВМВ'),
+            ('Boeing 707', 35000000, '🇺🇸 Реактивный пассажирский лайнер'),
+            ('Cy-47 Беркут', 36000000, '🇷🇺 Экспериментальный палубный истребитель'),
+            ('Northrop B-2 Spirit', 49000000, '🇺🇸 Малозаметный бомбардировщик'),
         ]
         for p in planes:
             c.execute("INSERT INTO planes_shop (name, price, description) VALUES (?, ?, ?)", p)
@@ -141,6 +146,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+# ========== РАБОТА С ИГРОКАМИ ==========
 def get_player(user_id):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -171,7 +177,51 @@ def update_player(user_id, **kwargs):
     conn.commit()
     conn.close()
 
-def get_businesses(city=None, available_only=False):
+# ========== ТЕМЫ ФОРУМА ==========
+def save_topic(chat_id, topic_id, topic_name, event_type):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO forum_topics (chat_id, topic_id, topic_name, event_type) VALUES (?, ?, ?, ?)",
+              (chat_id, topic_id, topic_name, event_type))
+    conn.commit()
+    conn.close()
+
+def get_topic_by_event(chat_id, event_type):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT topic_id, topic_name FROM forum_topics WHERE chat_id = ? AND event_type = ?", (chat_id, event_type))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+def get_all_topics(chat_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT topic_id, topic_name, event_type FROM forum_topics WHERE chat_id = ?", (chat_id,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def delete_topic(chat_id, topic_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM forum_topics WHERE chat_id = ? AND topic_id = ?", (chat_id, topic_id))
+    conn.commit()
+    conn.close()
+
+def post_to_topic(chat_id, event_type, message):
+    topic = get_topic_by_event(chat_id, event_type)
+    if not topic:
+        return False
+    topic_id, topic_name = topic
+    try:
+        bot.send_message(chat_id, message, message_thread_id=topic_id, parse_mode="HTML")
+        return True
+    except:
+        return False
+
+# ========== БИЗНЕСЫ ==========
+def get_businesses(city=None, available_only=False, page=1):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     if city and available_only:
@@ -182,25 +232,30 @@ def get_businesses(city=None, available_only=False):
         c.execute("SELECT id, name, price, salary, tax, owner_name, description FROM businesses WHERE owner_id = 0")
     else:
         c.execute("SELECT id, name, price, salary, tax, owner_name, description FROM businesses")
-    biz = c.fetchall()
+    all_biz = c.fetchall()
     conn.close()
-    return biz
+    total = len(all_biz)
+    total_pages = math.ceil(total / ITEMS_PER_PAGE)
+    start = (page - 1) * ITEMS_PER_PAGE
+    end = start + ITEMS_PER_PAGE
+    biz = all_biz[start:end]
+    return biz, total_pages, page
 
-def buy_business(user_id, biz_id):
+def buy_business(user_id, biz_id, chat_id):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT name, price, salary, tax, owner_id, owner_name, city FROM businesses WHERE id = ?", (biz_id,))
     biz = c.fetchone()
     if not biz:
         conn.close()
-        return False, "Бизнес не найден"
+        return False, "❌ Бизнес не найден"
     if biz[4] != 0:
         conn.close()
-        return False, f"Бизнес уже принадлежит {biz[5]}"
+        return False, f"❌ Бизнес уже принадлежит <b>{biz[5]}</b>"
     p = get_player(user_id)
     if p["balance"] < biz[1]:
         conn.close()
-        return False, f"Не хватает {biz[1]}$"
+        return False, f"❌ Не хватает <b>{biz[1]:,} ₽</b>"
     new_balance = p["balance"] - biz[1]
     update_player(user_id, balance=new_balance)
     businesses = p["businesses"] + [biz[0]]
@@ -208,43 +263,65 @@ def buy_business(user_id, biz_id):
     c.execute("UPDATE businesses SET owner_id = ?, owner_name = ? WHERE id = ?", (user_id, p["nick"], biz_id))
     conn.commit()
     conn.close()
-    return True, f"Вы купили бизнес {biz[0]} за {biz[1]}$"
+    
+    # Отправка в тему бизнесов
+    msg = f"🏭 <b>Покупка бизнеса</b>\n\nИгрок <b>{p['nick']}</b> купил бизнес <b>{biz[0]}</b> за <b>{biz[1]:,} ₽</b>"
+    post_to_topic(chat_id, "businesses", msg)
+    
+    return True, f"✅ Вы купили бизнес <b>{biz[0]}</b> за <b>{biz[1]:,} ₽</b>"
 
-def get_planes():
+# ========== АВИАСАЛОН ==========
+def get_planes(page=1):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT id, name, price, description FROM planes_shop")
-    planes = c.fetchall()
+    all_planes = c.fetchall()
     conn.close()
-    return planes
+    total = len(all_planes)
+    total_pages = math.ceil(total / ITEMS_PER_PAGE)
+    start = (page - 1) * ITEMS_PER_PAGE
+    end = start + ITEMS_PER_PAGE
+    planes = all_planes[start:end]
+    return planes, total_pages, page
 
-def buy_plane(user_id, plane_id):
+def buy_plane(user_id, plane_id, chat_id):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT name, price FROM planes_shop WHERE id = ?", (plane_id,))
     plane = c.fetchone()
     if not plane:
         conn.close()
-        return False, "Самолёт не найден"
+        return False, "❌ Самолёт не найден"
     p = get_player(user_id)
     if p["balance"] < plane[1]:
         conn.close()
-        return False, f"Не хватает {plane[1]}$"
+        return False, f"❌ Не хватает <b>{plane[1]:,} ₽</b>"
     new_balance = p["balance"] - plane[1]
     update_player(user_id, balance=new_balance)
     planes = p["planes"] + [plane[0]]
     update_player(user_id, planes=planes)
     conn.commit()
     conn.close()
-    return True, f"Вы купили самолёт {plane[0]} за {plane[1]}$"
+    
+    # Отправка в тему авиасалона
+    msg = f"✈️ <b>Покупка в авиасалоне</b>\n\nИгрок <b>{p['nick']}</b> купил самолёт <b>{plane[0]}</b> за <b>{plane[1]:,} ₽</b>"
+    post_to_topic(chat_id, "planes", msg)
+    
+    return True, f"✅ Вы купили самолёт <b>{plane[0]}</b> за <b>{plane[1]:,} ₽</b>"
 
-def get_top_players(limit=10):
+# ========== ТОП ==========
+def get_top_players(page=1):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT user_id, nick, balance FROM players ORDER BY balance DESC LIMIT ?", (limit,))
-    top = c.fetchall()
+    c.execute("SELECT user_id, nick, balance FROM players ORDER BY balance DESC")
+    all_top = c.fetchall()
     conn.close()
-    return top
+    total = len(all_top)
+    total_pages = math.ceil(total / ITEMS_PER_PAGE)
+    start = (page - 1) * ITEMS_PER_PAGE
+    end = start + ITEMS_PER_PAGE
+    top = all_top[start:end]
+    return top, total_pages, page
 
 # ========== КЛАВИАТУРЫ ==========
 def main_menu():
@@ -254,14 +331,13 @@ def main_menu():
         InlineKeyboardButton("💰 Баланс", callback_data="balance"),
         InlineKeyboardButton("🏦 Банк", callback_data="bank_menu"),
         InlineKeyboardButton("💼 Работа", callback_data="work_menu"),
-        InlineKeyboardButton("🛒 Магазин", callback_data="shop_menu"),
-        InlineKeyboardButton("✈️ Авиасалон", callback_data="planes_menu"),
         InlineKeyboardButton("🏭 Бизнесы", callback_data="businesses_menu"),
+        InlineKeyboardButton("✈️ Авиасалон", callback_data="planes_menu"),
         InlineKeyboardButton("🎫 Промокод", callback_data="promo"),
         InlineKeyboardButton("🏆 Топ", callback_data="top"),
         InlineKeyboardButton("💸 Перевод", callback_data="transfer"),
         InlineKeyboardButton("📋 Имущество", callback_data="inventory"),
-        InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="daily"),
+        InlineKeyboardButton("🎁 Бонус", callback_data="daily"),
         InlineKeyboardButton("👑 Админ", callback_data="admin_panel")
     )
     return kb
@@ -301,26 +377,125 @@ def work_menu():
     )
     return kb
 
-def shop_menu():
+def businesses_city_menu():
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-        InlineKeyboardButton("🚗 Авто", callback_data="shop_cars"),
-        InlineKeyboardButton("🏠 Дома", callback_data="shop_houses"),
-        InlineKeyboardButton("🛥️ Яхты", callback_data="shop_boats"),
+        InlineKeyboardButton("🏙️ Дубровка", callback_data="biz_dubrovka_1"),
+        InlineKeyboardButton("🏘️ Арзамас", callback_data="biz_arzamas_1"),
         InlineKeyboardButton("🔙 Назад", callback_data="menu")
     )
     return kb
 
-def businesses_menu(city=None):
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton("🏙️ Дубровка", callback_data="biz_dubrovka"),
-        InlineKeyboardButton("🏘️ Арзамас", callback_data="biz_arzamas"),
-        InlineKeyboardButton("🔙 Назад", callback_data="menu")
-    )
+def businesses_list_kb(biz_list, city, page, total_pages):
+    kb = InlineKeyboardMarkup(row_width=1)
+    for biz in biz_list:
+        bid, name, price, salary, tax, owner, desc = biz
+        status = f"❌ Владелец: {owner}" if owner else "✅ Доступно"
+        kb.add(InlineKeyboardButton(f"{name} — {price:,} ₽", callback_data=f"biz_{bid}"))
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton("◀️ Назад", callback_data=f"biz_{city}_{page-1}"))
+    if page < total_pages:
+        nav.append(InlineKeyboardButton("Вперёд ▶️", callback_data=f"biz_{city}_{page+1}"))
+    if nav:
+        kb.row(*nav)
+    kb.add(InlineKeyboardButton("🔙 Назад", callback_data="businesses_menu"))
     return kb
 
-# ========== КОМАНДЫ ==========
+def planes_list_kb(planes, page, total_pages):
+    kb = InlineKeyboardMarkup(row_width=1)
+    for p in planes:
+        pid, name, price, desc = p
+        kb.add(InlineKeyboardButton(f"{name} — {price:,} ₽", callback_data=f"plane_{pid}"))
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton("◀️ Назад", callback_data=f"planes_{page-1}"))
+    if page < total_pages:
+        nav.append(InlineKeyboardButton("Вперёд ▶️", callback_data=f"planes_{page+1}"))
+    if nav:
+        kb.row(*nav)
+    kb.add(InlineKeyboardButton("🔙 Назад", callback_data="menu"))
+    return kb
+
+def top_kb(page, total_pages):
+    kb = InlineKeyboardMarkup()
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton("◀️ Назад", callback_data=f"top_{page-1}"))
+    if page < total_pages:
+        nav.append(InlineKeyboardButton("Вперёд ▶️", callback_data=f"top_{page+1}"))
+    if nav:
+        kb.row(*nav)
+    kb.add(InlineKeyboardButton("🔙 Назад", callback_data="menu"))
+    return kb
+
+# ========== КОМАНДЫ НАСТРОЙКИ ФОРУМА ==========
+@bot.message_handler(commands=['settopic'])
+def set_topic_cmd(m):
+    user_id = m.from_user.id
+    chat_id = m.chat.id
+    topic_id = m.message_thread_id
+    topic_name = m.chat.title or f"тема_{topic_id}"
+    
+    if user_id != ADMIN_ID:
+        bot.reply_to(m, "❌ Только администратор")
+        return
+    
+    if not topic_id:
+        bot.reply_to(m, "❌ Эта команда работает только в теме форума")
+        return
+    
+    args = m.text.split()
+    if len(args) < 2:
+        bot.reply_to(m, "📌 Использование: /settopic <тип>\n\nДоступные типы:\n• cars — автосалон\n• houses — дома\n• businesses — бизнесы\n• planes — авиасалон\n• salary — выдача зарплаты")
+        return
+    
+    event_type = args[1].lower()
+    valid = ["cars", "houses", "businesses", "planes", "salary"]
+    if event_type not in valid:
+        bot.reply_to(m, f"❌ Неверный тип. Доступные: {', '.join(valid)}")
+        return
+    
+    save_topic(chat_id, topic_id, topic_name, event_type)
+    bot.reply_to(m, f"✅ Тема <b>{topic_name}</b> настроена на события <b>{event_type}</b>")
+
+@bot.message_handler(commands=['listtopics'])
+def list_topics_cmd(m):
+    user_id = m.from_user.id
+    chat_id = m.chat.id
+    
+    if user_id != ADMIN_ID:
+        bot.reply_to(m, "❌ Только администратор")
+        return
+    
+    topics = get_all_topics(chat_id)
+    if not topics:
+        bot.reply_to(m, "📭 Нет настроенных тем. Используй /settopic")
+        return
+    
+    text = "📋 <b>Настроенные темы</b>\n\n"
+    for topic_id, topic_name, event_type in topics:
+        text += f"• <b>{topic_name}</b> → {event_type}\n"
+    bot.reply_to(m, text)
+
+@bot.message_handler(commands=['removetopic'])
+def remove_topic_cmd(m):
+    user_id = m.from_user.id
+    chat_id = m.chat.id
+    topic_id = m.message_thread_id
+    
+    if user_id != ADMIN_ID:
+        bot.reply_to(m, "❌ Только администратор")
+        return
+    
+    if not topic_id:
+        bot.reply_to(m, "❌ Эта команда работает только в теме форума")
+        return
+    
+    delete_topic(chat_id, topic_id)
+    bot.reply_to(m, f"✅ Настройка для этой темы удалена")
+
+# ========== ОСНОВНЫЕ КОМАНДЫ ==========
 @bot.message_handler(commands=['start'])
 def start_cmd(m):
     user_id = m.from_user.id
@@ -337,15 +512,14 @@ def start_cmd(m):
 @bot.callback_query_handler(func=lambda c: True)
 def handle_callback(call):
     user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    message_id = call.message.message_id
     data = call.data
-    msg = call.message
-    chat_id = msg.chat.id
-    message_id = msg.message_id
-
+    
     if data == "menu":
         bot.edit_message_text("🔥 Главное меню:", chat_id, message_id, reply_markup=main_menu())
         return
-
+    
     # ===== ПРОФИЛЬ =====
     if data == "profile":
         p = get_player(user_id)
@@ -353,8 +527,8 @@ def handle_callback(call):
             f"👤 <b>Профиль</b>\n\n"
             f"🆔 ID: {p['user_id']}\n"
             f"📛 Ник: {p['nick']}\n"
-            f"💰 Наличные: {p['balance']}$\n"
-            f"🏦 Банк: {p['bank']}$\n"
+            f"💰 Наличные: {p['balance']:,} ₽\n"
+            f"🏦 Банк: {p['bank']:,} ₽\n"
             f"💼 Работа: {p['job']}\n"
             f"⚔️ Фракция: {p['faction']}\n"
             f"📄 Паспорт: {'✅' if p['passport'] else '❌'}\n"
@@ -362,38 +536,32 @@ def handle_callback(call):
         )
         bot.edit_message_text(text, chat_id, message_id, reply_markup=back_button())
         return
-
+    
     if data == "balance":
         p = get_player(user_id)
-        text = f"💰 <b>Ваш баланс</b>\n\nНаличные: {p['balance']}$\nБанк: {p['bank']}$"
+        text = f"💰 <b>Ваш баланс</b>\n\nНаличные: {p['balance']:,} ₽\nБанк: {p['bank']:,} ₽"
         bot.edit_message_text(text, chat_id, message_id, reply_markup=back_button())
         return
-
+    
     # ===== БАНК =====
     if data == "bank_menu":
         bot.edit_message_text("🏦 <b>Банковские операции</b>", chat_id, message_id, reply_markup=bank_menu())
         return
-
+    
     if data == "bank_deposit":
-        bot.send_message(user_id, "Введите сумму для внесения:")
+        bot.send_message(user_id, "💰 Введите сумму для внесения на счёт:")
         bot.register_next_step_handler_by_chat_id(user_id, lambda m: bank_action(m, "deposit"))
         bot.answer_callback_query(call.id)
         return
-
+    
     if data == "bank_withdraw":
-        bot.send_message(user_id, "Введите сумму для снятия:")
+        bot.send_message(user_id, "💸 Введите сумму для снятия со счёта:")
         bot.register_next_step_handler_by_chat_id(user_id, lambda m: bank_action(m, "withdraw"))
         bot.answer_callback_query(call.id)
         return
-
+    
     # ===== РАБОТА =====
     if data == "work_menu":
-        bot.edit_message_text("💼 <b>Выбери работу</b>", chat_id, message_id, reply_markup=work_menu())
-        return
-
-    if data.startswith("work_"):
-        jobs = {"loader": 5000, "taxi": 8000, "mechanic": 12000, "doctor": 15000}
-        salary = jobs.get(data.split("_")[1], 5000)
         p = get_player(user_id)
         if p["work_time"]:
             last_work = datetime.fromisoformat(p["work_time"])
@@ -401,100 +569,46 @@ def handle_callback(call):
                 remaining = 5 - (datetime.now() - last_work).seconds // 60
                 bot.answer_callback_query(call.id, f"⏰ Отдыхай! Следующая работа через {remaining} мин", show_alert=True)
                 return
-        update_player(user_id, balance=p["balance"] + salary, work_time=datetime.now().isoformat())
-        bot.answer_callback_query(call.id, f"✅ +{salary}$", show_alert=True)
+        bot.edit_message_text("💼 <b>Выбери работу</b>", chat_id, message_id, reply_markup=work_menu())
+        return
+    
+    if data.startswith("work_"):
+        jobs = {"loader": 5000, "taxi": 8000, "mechanic": 12000, "doctor": 15000}
+        salary = jobs.get(data.split("_")[1], 5000)
         p = get_player(user_id)
-        bot.edit_message_text(f"💼 Вы отработали и получили {salary}$\n\nБаланс: {p['balance']}$", chat_id, message_id, reply_markup=back_button())
+        update_player(user_id, balance=p["balance"] + salary, work_time=datetime.now().isoformat())
+        bot.answer_callback_query(call.id, f"✅ +{salary} ₽", show_alert=True)
+        p = get_player(user_id)
+        bot.edit_message_text(f"💼 Вы отработали и получили {salary:,} ₽\n\nБаланс: {p['balance']:,} ₽", chat_id, message_id, reply_markup=back_button())
         return
-
-    # ===== МАГАЗИН =====
-    if data == "shop_menu":
-        bot.edit_message_text("🛒 <b>Магазин</b>", chat_id, message_id, reply_markup=shop_menu())
-        return
-
-    if data.startswith("shop_"):
-        bot.answer_callback_query(call.id, "🚧 В разработке", show_alert=True)
-        return
-
-    # ===== АВИАСАЛОН =====
-    if data == "planes_menu":
-        planes = get_planes()
-        if not planes:
-            bot.edit_message_text("✈️ Самолётов пока нет", chat_id, message_id, reply_markup=back_button())
-            return
-        text = "✈️ <b>Авиасалон</b>\n\n"
-        kb = InlineKeyboardMarkup(row_width=1)
-        for pid, name, price, desc in planes:
-            text += f"• {name} — {price}$\n"
-            kb.add(InlineKeyboardButton(f"✈️ {name}", callback_data=f"plane_{pid}"))
-        kb.add(InlineKeyboardButton("🔙 Назад", callback_data="menu"))
-        bot.edit_message_text(text, chat_id, message_id, reply_markup=kb)
-        return
-
-    if data.startswith("plane_"):
-        plane_id = int(data.split("_")[1])
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("SELECT name, price, description FROM planes_shop WHERE id = ?", (plane_id,))
-        plane = c.fetchone()
-        conn.close()
-        if not plane:
-            bot.answer_callback_query(call.id, "Самолёт не найден", show_alert=True)
-            return
-        name, price, desc = plane
-        text = f"✈️ <b>{name}</b>\n\n💰 Цена: {price}$\n\n📖 {desc}\n\nКупить?"
-        kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("✅ Купить", callback_data=f"buy_plane_{plane_id}"))
-        kb.add(InlineKeyboardButton("🔙 Назад", callback_data="planes_menu"))
-        bot.edit_message_text(text, chat_id, message_id, reply_markup=kb)
-        return
-
-    if data.startswith("buy_plane_"):
-        plane_id = int(data.split("_")[2])
-        success, msg = buy_plane(user_id, plane_id)
-        bot.answer_callback_query(call.id, msg, show_alert=True)
-        if success:
-            p = get_player(user_id)
-            bot.edit_message_text(f"✅ {msg}\n\n💰 Новый баланс: {p['balance']}$", chat_id, message_id, reply_markup=back_button())
-        return
-
+    
     # ===== БИЗНЕСЫ =====
     if data == "businesses_menu":
-        bot.edit_message_text("🏭 <b>Бизнесы</b>\n\nВыбери город:", chat_id, message_id, reply_markup=businesses_menu())
+        bot.edit_message_text("🏭 <b>Бизнесы</b>\n\nВыбери город:", chat_id, message_id, reply_markup=businesses_city_menu())
         return
-
-    if data == "biz_dubrovka":
-        biz_list = get_businesses(city="Дубровка")
+    
+    if data.startswith("biz_dubrovka_"):
+        page = int(data.split("_")[2])
+        biz_list, total_pages, _ = get_businesses(city="Дубровка", available_only=True, page=page)
         if not biz_list:
-            bot.edit_message_text("🏭 Бизнесов в Дубровке пока нет", chat_id, message_id, reply_markup=back_button())
+            bot.edit_message_text("🏭 Нет доступных бизнесов в Дубровке", chat_id, message_id, reply_markup=back_button())
             return
-        text = "🏭 <b>Бизнесы Дубровка</b>\n\n"
-        kb = InlineKeyboardMarkup(row_width=1)
-        for bid, name, price, salary, tax, owner, desc in biz_list:
-            status = f"❌ Владелец: {owner}" if owner else "✅ Доступно"
-            text += f"• {name} — {price}$\n   {status}\n"
-            if not owner:
-                kb.add(InlineKeyboardButton(f"🏭 {name}", callback_data=f"biz_{bid}"))
-        kb.add(InlineKeyboardButton("🔙 Назад", callback_data="businesses_menu"))
+        text = f"🏭 <b>Бизнесы Дубровка</b> (стр. {page}/{total_pages})\n\n"
+        kb = businesses_list_kb(biz_list, "dubrovka", page, total_pages)
         bot.edit_message_text(text, chat_id, message_id, reply_markup=kb)
         return
-
-    if data == "biz_arzamas":
-        biz_list = get_businesses(city="Арзамас")
+    
+    if data.startswith("biz_arzamas_"):
+        page = int(data.split("_")[2])
+        biz_list, total_pages, _ = get_businesses(city="Арзамас", available_only=True, page=page)
         if not biz_list:
-            bot.edit_message_text("🏭 Бизнесов в Арзамасе пока нет", chat_id, message_id, reply_markup=back_button())
+            bot.edit_message_text("🏭 Нет доступных бизнесов в Арзамасе", chat_id, message_id, reply_markup=back_button())
             return
-        text = "🏭 <b>Бизнесы Арзамас</b>\n\n"
-        kb = InlineKeyboardMarkup(row_width=1)
-        for bid, name, price, salary, tax, owner, desc in biz_list:
-            status = f"❌ Владелец: {owner}" if owner else "✅ Доступно"
-            text += f"• {name} — {price}$\n   {status}\n"
-            if not owner:
-                kb.add(InlineKeyboardButton(f"🏭 {name}", callback_data=f"biz_{bid}"))
-        kb.add(InlineKeyboardButton("🔙 Назад", callback_data="businesses_menu"))
+        text = f"🏭 <b>Бизнесы Арзамас</b> (стр. {page}/{total_pages})\n\n"
+        kb = businesses_list_kb(biz_list, "arzamas", page, total_pages)
         bot.edit_message_text(text, chat_id, message_id, reply_markup=kb)
         return
-
+    
     if data.startswith("biz_"):
         biz_id = int(data.split("_")[1])
         conn = sqlite3.connect(DB_FILE)
@@ -503,44 +617,98 @@ def handle_callback(call):
         biz = c.fetchone()
         conn.close()
         if not biz:
-            bot.answer_callback_query(call.id, "Бизнес не найден", show_alert=True)
+            bot.answer_callback_query(call.id, "❌ Бизнес не найден", show_alert=True)
             return
         name, price, salary, tax, desc, owner = biz
         if owner:
             bot.answer_callback_query(call.id, f"❌ Бизнес уже принадлежит {owner}", show_alert=True)
             return
-        text = f"🏭 <b>{name}</b>\n\n💰 Цена: {price}$\n💵 Доход: {salary}$\n📉 Налог: {tax}$\n\n📖 {desc}\n\nКупить?"
+        text = f"🏭 <b>{name}</b>\n\n💰 Цена: {price:,} ₽\n💵 Доход: {salary:,} ₽\n📉 Налог: {tax:,} ₽\n\n📖 {desc}\n\nКупить?"
         kb = InlineKeyboardMarkup()
         kb.add(InlineKeyboardButton("✅ Купить", callback_data=f"buy_biz_{biz_id}"))
         kb.add(InlineKeyboardButton("🔙 Назад", callback_data="businesses_menu"))
         bot.edit_message_text(text, chat_id, message_id, reply_markup=kb)
         return
-
+    
     if data.startswith("buy_biz_"):
         biz_id = int(data.split("_")[2])
-        success, msg = buy_business(user_id, biz_id)
+        success, msg = buy_business(user_id, biz_id, chat_id)
         bot.answer_callback_query(call.id, msg, show_alert=True)
         if success:
             p = get_player(user_id)
-            bot.edit_message_text(f"✅ {msg}\n\n💰 Новый баланс: {p['balance']}$", chat_id, message_id, reply_markup=back_button())
+            bot.edit_message_text(f"✅ {msg}\n\n💰 Новый баланс: {p['balance']:,} ₽", chat_id, message_id, reply_markup=back_button())
         return
-
+    
+    # ===== АВИАСАЛОН =====
+    if data == "planes_menu":
+        planes, total_pages, page = get_planes(1)
+        text = f"✈️ <b>Авиасалон</b> (стр. 1/{total_pages})\n\n"
+        kb = planes_list_kb(planes, 1, total_pages)
+        bot.edit_message_text(text, chat_id, message_id, reply_markup=kb)
+        return
+    
+    if data.startswith("planes_"):
+        page = int(data.split("_")[1])
+        planes, total_pages, _ = get_planes(page)
+        text = f"✈️ <b>Авиасалон</b> (стр. {page}/{total_pages})\n\n"
+        kb = planes_list_kb(planes, page, total_pages)
+        bot.edit_message_text(text, chat_id, message_id, reply_markup=kb)
+        return
+    
+    if data.startswith("plane_"):
+        plane_id = int(data.split("_")[1])
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT name, price, description FROM planes_shop WHERE id = ?", (plane_id,))
+        plane = c.fetchone()
+        conn.close()
+        if not plane:
+            bot.answer_callback_query(call.id, "❌ Самолёт не найден", show_alert=True)
+            return
+        name, price, desc = plane
+        text = f"✈️ <b>{name}</b>\n\n💰 Цена: {price:,} ₽\n\n📖 {desc}\n\nКупить?"
+        kb = InlineKeyboardMarkup()
+        kb.add(InlineKeyboardButton("✅ Купить", callback_data=f"buy_plane_{plane_id}"))
+        kb.add(InlineKeyboardButton("🔙 Назад", callback_data="planes_menu"))
+        bot.edit_message_text(text, chat_id, message_id, reply_markup=kb)
+        return
+    
+    if data.startswith("buy_plane_"):
+        plane_id = int(data.split("_")[2])
+        success, msg = buy_plane(user_id, plane_id, chat_id)
+        bot.answer_callback_query(call.id, msg, show_alert=True)
+        if success:
+            p = get_player(user_id)
+            bot.edit_message_text(f"✅ {msg}\n\n💰 Новый баланс: {p['balance']:,} ₽", chat_id, message_id, reply_markup=back_button())
+        return
+    
     # ===== ТОП =====
     if data == "top":
-        top = get_top_players(10)
+        top, total_pages, page = get_top_players(1)
         text = "🏆 <b>Топ игроков</b>\n\n"
-        for i, (uid, nick, balance) in enumerate(top, 1):
-            text += f"{i}. {nick} — {balance}$\n"
-        bot.edit_message_text(text, chat_id, message_id, reply_markup=back_button())
+        for i, (uid, nick, balance) in enumerate(top, (page-1)*ITEMS_PER_PAGE + 1):
+            text += f"{i}. {nick} — {balance:,} ₽\n"
+        kb = top_kb(page, total_pages)
+        bot.edit_message_text(text, chat_id, message_id, reply_markup=kb)
         return
-
+    
+    if data.startswith("top_"):
+        page = int(data.split("_")[1])
+        top, total_pages, _ = get_top_players(page)
+        text = "🏆 <b>Топ игроков</b>\n\n"
+        for i, (uid, nick, balance) in enumerate(top, (page-1)*ITEMS_PER_PAGE + 1):
+            text += f"{i}. {nick} — {balance:,} ₽\n"
+        kb = top_kb(page, total_pages)
+        bot.edit_message_text(text, chat_id, message_id, reply_markup=kb)
+        return
+    
     # ===== ПЕРЕВОД =====
     if data == "transfer":
-        bot.send_message(user_id, "💸 Введите ID или ник (@nick) и сумму через пробел\nПример: @nick 500")
+        bot.send_message(user_id, "💸 Введите ID или ник (@nick) и сумму через пробел\nПример: @nick 5000")
         bot.register_next_step_handler_by_chat_id(user_id, transfer_handler)
         bot.answer_callback_query(call.id)
         return
-
+    
     # ===== ИМУЩЕСТВО =====
     if data == "inventory":
         p = get_player(user_id)
@@ -554,7 +722,7 @@ def handle_callback(call):
         )
         bot.edit_message_text(text, chat_id, message_id, reply_markup=back_button())
         return
-
+    
     # ===== ЕЖЕДНЕВНЫЙ БОНУС =====
     if data == "daily":
         p = get_player(user_id)
@@ -566,18 +734,18 @@ def handle_callback(call):
                 return
         bonus = random.randint(500, 2000)
         update_player(user_id, balance=p["balance"] + bonus, daily_date=datetime.now().isoformat())
-        bot.answer_callback_query(call.id, f"🎁 +{bonus}$", show_alert=True)
+        bot.answer_callback_query(call.id, f"🎁 +{bonus} ₽", show_alert=True)
         p = get_player(user_id)
-        bot.edit_message_text(f"🎁 Ежедневный бонус: +{bonus}$\n\n💰 Баланс: {p['balance']}$", chat_id, message_id, reply_markup=back_button())
+        bot.edit_message_text(f"🎁 Ежедневный бонус: +{bonus:,} ₽\n\n💰 Баланс: {p['balance']:,} ₽", chat_id, message_id, reply_markup=back_button())
         return
-
+    
     # ===== ПРОМОКОД =====
     if data == "promo":
         bot.send_message(user_id, "🎫 Введите промокод:")
         bot.register_next_step_handler_by_chat_id(user_id, promo_handler)
         bot.answer_callback_query(call.id)
         return
-
+    
     # ===== АДМИНКА =====
     if data == "admin_panel":
         if user_id != ADMIN_ID:
@@ -585,15 +753,15 @@ def handle_callback(call):
             return
         bot.edit_message_text("👑 <b>Админ панель</b>", chat_id, message_id, reply_markup=admin_menu())
         return
-
+    
     if data == "admin_salary":
         if user_id != ADMIN_ID:
             return
-        bot.send_message(user_id, "Введите: ID_игрока Сумма Комментарий\nПример: 123456789 500 За работу")
+        bot.send_message(user_id, "Введите: ID_игрока Сумма Комментарий\nПример: 123456789 500000 За работу")
         bot.register_next_step_handler_by_chat_id(user_id, salary_handler)
         bot.answer_callback_query(call.id)
         return
-
+    
     if data == "admin_stats":
         if user_id != ADMIN_ID:
             return
@@ -606,14 +774,14 @@ def handle_callback(call):
         c.execute("SELECT SUM(bank) FROM players")
         total_bank = c.fetchone()[0] or 0
         conn.close()
-        text = f"📊 <b>Статистика</b>\n\n👥 Игроков: {players}\n💰 Денег в экономике: {total_money + total_bank}$\n💳 На руках: {total_money}$\n🏦 В банке: {total_bank}$"
+        text = f"📊 <b>Статистика</b>\n\n👥 Игроков: {players}\n💰 Денег в экономике: {total_money + total_bank:,} ₽\n💳 На руках: {total_money:,} ₽\n🏦 В банке: {total_bank:,} ₽"
         bot.edit_message_text(text, chat_id, message_id, reply_markup=admin_menu())
         return
-
+    
     if data == "admin_create_promo":
         if user_id != ADMIN_ID:
             return
-        bot.send_message(user_id, "Введите: КОД ТИП СУММА ЛИМИТ ДНЕЙ\nТипы: money, bank\nПример: PROMO100 money 100 50 7")
+        bot.send_message(user_id, "Введите: КОД ТИП СУММА ЛИМИТ ДНЕЙ\nТипы: money, bank\nПример: PROMO100 money 1000 50 7")
         bot.register_next_step_handler_by_chat_id(user_id, create_promo_handler)
         bot.answer_callback_query(call.id)
         return
@@ -629,16 +797,16 @@ def bank_action(m, action):
         p = get_player(user_id)
         if action == "deposit":
             if p["balance"] < amount:
-                bot.send_message(user_id, f"❌ Не хватает {amount}$ на руках")
+                bot.send_message(user_id, f"❌ Не хватает {amount:,} ₽ на руках")
                 return
             update_player(user_id, balance=p["balance"] - amount, bank=p["bank"] + amount)
-            bot.send_message(user_id, f"✅ Внесено {amount}$ на счёт")
+            bot.send_message(user_id, f"✅ Внесено {amount:,} ₽ на счёт")
         else:
             if p["bank"] < amount:
-                bot.send_message(user_id, f"❌ Не хватает {amount}$ на счёте")
+                bot.send_message(user_id, f"❌ Не хватает {amount:,} ₽ на счёте")
                 return
             update_player(user_id, balance=p["balance"] + amount, bank=p["bank"] - amount)
-            bot.send_message(user_id, f"✅ Снято {amount}$ со счёта")
+            bot.send_message(user_id, f"✅ Снято {amount:,} ₽ со счёта")
     except:
         bot.send_message(user_id, "❌ Ошибка! Введите число")
 
@@ -670,15 +838,15 @@ def transfer_handler(m):
             return
         p = get_player(user_id)
         if p["balance"] < amount:
-            bot.send_message(user_id, f"❌ Не хватает {amount}$")
+            bot.send_message(user_id, f"❌ Не хватает {amount:,} ₽")
             return
         update_player(user_id, balance=p["balance"] - amount)
         target_p = get_player(target_id)
         update_player(target_id, balance=target_p["balance"] + amount)
-        bot.send_message(user_id, f"✅ Переведено {amount}$ игроку {target_id}")
-        bot.send_message(target_id, f"💰 Вам переведено {amount}$ от {p['nick']}")
+        bot.send_message(user_id, f"✅ Переведено {amount:,} ₽ игроку {target_id}")
+        bot.send_message(target_id, f"💰 Вам переведено {amount:,} ₽ от {p['nick']}")
     except:
-        bot.send_message(user_id, "❌ Ошибка! Формат: @nick 500 или ID 500")
+        bot.send_message(user_id, "❌ Ошибка! Формат: @nick 5000 или ID 5000")
 
 def promo_handler(m):
     user_id = m.from_user.id
@@ -704,10 +872,10 @@ def promo_handler(m):
     p = get_player(user_id)
     if rt == "money":
         update_player(user_id, balance=p["balance"] + ra)
-        bot.send_message(user_id, f"✅ Промокод активирован! +{ra}$")
+        bot.send_message(user_id, f"✅ Промокод активирован! +{ra:,} ₽")
     elif rt == "bank":
         update_player(user_id, bank=p["bank"] + ra)
-        bot.send_message(user_id, f"✅ Промокод активирован! +{ra}$ на счёт")
+        bot.send_message(user_id, f"✅ Промокод активирован! +{ra:,} ₽ на счёт")
     c.execute("UPDATE promocodes SET used_count = used_count + 1 WHERE code = ?", (code,))
     c.execute("INSERT INTO promo_used (code, user_id) VALUES (?, ?)", (code, user_id))
     conn.commit()
@@ -729,8 +897,11 @@ def salary_handler(m):
                   (target_id, amount, comment, ADMIN_ID, datetime.now().isoformat()))
         conn.commit()
         conn.close()
-        bot.send_message(ADMIN_ID, f"✅ Выдано {amount}$ игроку {target_id}")
-        bot.send_message(target_id, f"💰 Вам выдана зарплата: {amount}$\nКомментарий: {comment}")
+        bot.send_message(ADMIN_ID, f"✅ Выдано {amount:,} ₽ игроку {target_id}")
+        bot.send_message(target_id, f"💰 Вам выдана зарплата: {amount:,} ₽\nКомментарий: {comment}")
+        
+        # Отправка в тему зарплат
+        post_to_topic(m.chat.id, "salary", f"💰 <b>Выдача зарплаты</b>\n\nИгрок <b>{p['nick']}</b> получил {amount:,} ₽\n📝 {comment}")
     except:
         bot.send_message(ADMIN_ID, "❌ Ошибка! Формат: ID Сумма Комментарий")
 
@@ -759,4 +930,5 @@ def create_promo_handler(m):
 if __name__ == "__main__":
     init_db()
     print("✅ Crimson RP бот запущен!")
+    print("✅ Поддерживает обычные чаты и форумы с темами")
     bot.infinity_polling()
