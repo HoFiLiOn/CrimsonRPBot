@@ -1,7 +1,8 @@
 import telebot
 import sqlite3
 import random
-import time
+import json
+import os
 from datetime import datetime, timedelta
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -11,8 +12,10 @@ ADMIN_ID = 7040677455
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
 # ========== БД ==========
+DB_FILE = "crimson_rp.db"
+
 def init_db():
-    conn = sqlite3.connect("crimson_rp.db")
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS players (
         user_id INTEGER PRIMARY KEY,
@@ -65,11 +68,33 @@ def init_db():
         admin_id INTEGER,
         date TEXT
     )''')
+    
+    # Добавляем тестовые данные, если пусто
+    c.execute("SELECT COUNT(*) FROM shop_items")
+    if c.fetchone()[0] == 0:
+        shop_items = [
+            ('cars', 'BMW X5', 5000, 'Крутой внедорожник', ''),
+            ('cars', 'Mercedes S63', 8000, 'Бизнес-класс', ''),
+            ('houses', 'Особняк', 15000, 'Дом у озера', ''),
+            ('houses', 'Апартаменты', 8000, 'В центре города', ''),
+            ('boats', 'Yamaha 242', 12000, 'Скоростной катер', ''),
+            ('planes', 'Cessna 172', 25000, 'Легкий самолет', ''),
+        ]
+        for item in shop_items:
+            c.execute("INSERT INTO shop_items (category, name, price, description, forum_link) VALUES (?, ?, ?, ?, ?)", item)
+    
+    c.execute("SELECT COUNT(*) FROM cases")
+    if c.fetchone()[0] == 0:
+        items1 = json.dumps([{"type":"money","amount":100},{"type":"money","amount":200},{"type":"money","amount":500},{"type":"car","name":"Honda Civic"}])
+        c.execute("INSERT INTO cases (name, price, items) VALUES (?, ?, ?)", ('Обычный кейс', 500, items1))
+        items2 = json.dumps([{"type":"money","amount":1000},{"type":"money","amount":2000},{"type":"car","name":"BMW X5"},{"type":"house","name":"Особняк"}])
+        c.execute("INSERT INTO cases (name, price, items) VALUES (?, ?, ?)", ('VIP кейс', 2000, items2))
+    
     conn.commit()
     conn.close()
 
 def get_player(user_id):
-    conn = sqlite3.connect("crimson_rp.db")
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT * FROM players WHERE user_id = ?", (user_id,))
     p = c.fetchone()
@@ -88,7 +113,7 @@ def get_player(user_id):
     }
 
 def update_player(user_id, **kwargs):
-    conn = sqlite3.connect("crimson_rp.db")
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     for k, v in kwargs.items():
         if k in ["cars", "houses", "businesses", "boats", "planes"]:
@@ -98,7 +123,7 @@ def update_player(user_id, **kwargs):
     conn.close()
 
 def get_top_players(limit=10):
-    conn = sqlite3.connect("crimson_rp.db")
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT user_id, nick, balance FROM players ORDER BY balance DESC LIMIT ?", (limit,))
     top = c.fetchall()
@@ -139,7 +164,7 @@ def admin_menu():
 def start_cmd(m):
     user_id = m.from_user.id
     nick = m.from_user.username or m.from_user.first_name
-    conn = sqlite3.connect("crimson_rp.db")
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT * FROM players WHERE user_id = ?", (user_id,))
     if not c.fetchone():
@@ -229,7 +254,7 @@ def handle_callback(call):
     if data == "admin_stats":
         if user_id != ADMIN_ID:
             return
-        conn = sqlite3.connect("crimson_rp.db")
+        conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM players")
         players = c.fetchone()[0]
@@ -255,7 +280,7 @@ def handle_callback(call):
 
     if data.startswith("shop_"):
         category = data.split("_")[1]
-        conn = sqlite3.connect("crimson_rp.db")
+        conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("SELECT name, price, description, forum_link FROM shop_items WHERE category = ?", (category,))
         items = c.fetchall()
@@ -272,9 +297,45 @@ def handle_callback(call):
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=kb)
         return
 
+    if data.startswith("buy_"):
+        parts = data.split("_")
+        category = parts[1]
+        item_name = "_".join(parts[2:])
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT price, description FROM shop_items WHERE category = ? AND name = ?", (category, item_name))
+        item = c.fetchone()
+        conn.close()
+        if not item:
+            bot.answer_callback_query(call.id, "Товар не найден", show_alert=True)
+            return
+        price, desc = item
+        p = get_player(user_id)
+        if p["balance"] < price:
+            bot.answer_callback_query(call.id, f"❌ Не хватает {price}$!", show_alert=True)
+            return
+        # Зачисление предмета
+        if category == "cars":
+            cars = p["cars"] + [item_name]
+            update_player(user_id, cars=cars)
+        elif category == "houses":
+            houses = p["houses"] + [item_name]
+            update_player(user_id, houses=houses)
+        elif category == "boats":
+            boats = p["boats"] + [item_name]
+            update_player(user_id, boats=boats)
+        elif category == "planes":
+            planes = p["planes"] + [item_name]
+            update_player(user_id, planes=planes)
+        new_balance = p["balance"] - price
+        update_player(user_id, balance=new_balance)
+        bot.answer_callback_query(call.id, f"✅ {item_name} куплен!", show_alert=True)
+        bot.edit_message_text(f"✅ Вы купили {item_name} за {price}$\n\n{desc}", call.message.chat.id, call.message.message_id, reply_markup=profile_menu())
+        return
+
     # ===== КЕЙСЫ =====
     if data == "cases":
-        conn = sqlite3.connect("crimson_rp.db")
+        conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("SELECT id, name, price FROM cases")
         cases = c.fetchall()
@@ -293,7 +354,7 @@ def handle_callback(call):
 
     if data.startswith("open_case_"):
         case_id = int(data.split("_")[2])
-        conn = sqlite3.connect("crimson_rp.db")
+        conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("SELECT name, price, items FROM cases WHERE id = ?", (case_id,))
         case = c.fetchone()
@@ -327,6 +388,7 @@ def handle_callback(call):
             result = reward["name"]
         bot.answer_callback_query(call.id, f"🎉 Выпало: {result}!", show_alert=True)
         bot.edit_message_text(f"📦 {name}\n\nВыпало: {result}", call.message.chat.id, call.message.message_id, reply_markup=profile_menu())
+        return
 
 # ========== ОБРАБОТЧИКИ ==========
 def transfer_handler(m):
@@ -335,7 +397,7 @@ def transfer_handler(m):
         parts = m.text.split()
         target = parts[0]
         amount = int(parts[1])
-        conn = sqlite3.connect("crimson_rp.db")
+        conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         if target.startswith("@"):
             nick = target[1:]
@@ -363,7 +425,7 @@ def transfer_handler(m):
 def promo_handler(m):
     user_id = m.from_user.id
     code = m.text.upper()
-    conn = sqlite3.connect("crimson_rp.db")
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT reward_type, reward_amount, max_uses, used_count, expires FROM promocodes WHERE code = ?", (code,))
     promo = c.fetchone()
@@ -404,7 +466,7 @@ def salary_handler(m):
         comment = " ".join(parts[2:])
         p = get_player(target_id)
         update_player(target_id, balance=p["balance"] + amount)
-        conn = sqlite3.connect("crimson_rp.db")
+        conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("INSERT INTO salary_log (user_id, amount, comment, admin_id, date) VALUES (?, ?, ?, ?, ?)",
                   (target_id, amount, comment, admin_id, datetime.now().isoformat()))
@@ -426,7 +488,7 @@ def create_promo_handler(m):
         mu = int(parts[3])
         days = int(parts[4])
         expires = (datetime.now() + timedelta(days=days)).isoformat()
-        conn = sqlite3.connect("crimson_rp.db")
+        conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("INSERT INTO promocodes (code, reward_type, reward_amount, max_uses, expires) VALUES (?, ?, ?, ?, ?)",
                   (code, rt, ra, mu, expires))
